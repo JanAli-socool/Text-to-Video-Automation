@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState, useCallback, ReactNode } from 'react';
 import { Session, User } from '@supabase/supabase-js';
-import { supabase } from '@/lib/supabase';
+import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 import type { Profile } from '@/types';
 
 interface AuthState {
@@ -21,6 +21,17 @@ interface AuthContextValue extends AuthState {
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
+function friendlyAuthError(message: string): string {
+  const normalized = message.toLowerCase();
+  if (normalized.includes('rate limit') || normalized.includes('too many')) {
+    return 'Supabase email sending is rate-limited. Wait before retrying, or disable Confirm email for development in Supabase → Authentication → Providers → Email. For production, configure custom SMTP.';
+  }
+  if (normalized.includes('email not confirmed')) {
+    return 'Please confirm your email before signing in, or disable Confirm email in Supabase for development.';
+  }
+  return message;
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AuthState>({
     session: null,
@@ -37,15 +48,41 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .eq('id', userId)
       .maybeSingle();
 
-    if (error) {
+    if (data) return data as Profile;
+
+    // Older accounts may exist in auth.users without a profile row (for
+    // example when the profile trigger was not installed). Repair that state
+    // on first login so the credit balance can be loaded normally.
+    if (!error || error.code === 'PGRST116') {
+      const { data: created, error: createError } = await supabase
+        .from('profiles')
+        .upsert({
+          id: userId,
+          username: `creator_${userId.slice(0, 8)}`,
+          full_name: '',
+          avatar_url: '',
+          bio: '',
+          plan: 'free',
+          credits: 10,
+        }, { onConflict: 'id' })
+        .select()
+        .single();
+
+      if (created) return created as Profile;
+      if (createError) console.warn('Failed to create missing profile:', createError.message);
+    } else {
       console.warn('Failed to fetch profile:', error.message);
-      return null;
     }
-    return data as Profile | null;
+    return null;
   }, []);
 
   useEffect(() => {
     let mounted = true;
+
+    if (!isSupabaseConfigured) {
+      setState({ session: null, user: null, profile: null, loading: false, error: 'Supabase is not configured.' });
+      return () => { mounted = false; };
+    }
 
     (async () => {
       const {
@@ -81,13 +118,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [fetchProfile]);
 
   const signIn = useCallback(async (email: string, password: string) => {
+    if (!isSupabaseConfigured) return { error: 'Supabase is not configured. Add your environment variables and restart Expo.' };
     const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) return { error: error.message };
+    if (error) return { error: friendlyAuthError(error.message) };
     return { error: null };
   }, []);
 
   const signUp = useCallback(
     async (email: string, password: string, username: string, fullName: string) => {
+      if (!isSupabaseConfigured) return { error: 'Supabase is not configured. Add your environment variables and restart Expo.' };
       const { data, error } = await supabase.auth.signUp({
         email,
         password,
@@ -96,7 +135,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         },
       });
 
-      if (error) return { error: error.message };
+      if (error) return { error: friendlyAuthError(error.message) };
       if (!data.user) return { error: 'Sign-up failed. Please try again.' };
 
       return { error: null };

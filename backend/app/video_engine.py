@@ -129,6 +129,25 @@ async def generate_video(
     title = _generate_title(prompt)
     thumbnail_url = _pick_thumbnail(prompt)
 
+    # Hosted provider mode is the recommended production path. It runs outside
+    # the API process and avoids requiring a local CUDA GPU.
+    if settings.video_provider.lower() == "replicate":
+        from app.providers.replicate import generate_with_replicate
+        result = await generate_with_replicate(
+            prompt=prompt,
+            duration=duration,
+            aspect_ratio=aspect_ratio,
+            model=model,
+            token=settings.video_provider_token,
+            model_ref=settings.video_provider_model,
+        )
+        return {
+            "title": title,
+            "thumbnail_url": thumbnail_url,
+            "video_url": result["video_url"],
+            "prediction_id": result.get("prediction_id"),
+        }
+
     if not settings.enable_gpu_generation:
         # ---- Mock mode: simulate generation with progress ----
         total_steps = 20

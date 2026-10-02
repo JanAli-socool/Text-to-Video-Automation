@@ -28,6 +28,10 @@ class Settings(BaseSettings):
     model_id: str = "stable-diffusion-v1-5/stable-video-diffusion-img2vid-xt"
     output_dir: str = "./generated_videos"
     mock_generation_delay: int = 8  # seconds
+    video_provider: str = "mock"
+    video_provider_token: str = ""
+    video_provider_model: str = ""  # Replicate format: owner/model-name
+    preview_dev_auth: bool = True
 
     class Config:
         env_file = ".env"

@@ -10,6 +10,8 @@ import {
   Share,
   FlatList,
   Dimensions,
+  Linking,
+  Alert,
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -26,6 +28,8 @@ import {
   Lock,
   Sparkles,
   RefreshCw,
+  MonitorPlay,
+  Download,
 } from 'lucide-react-native';
 import { COLORS } from '@/lib/colors';
 import { supabase } from '@/lib/supabase';
@@ -68,9 +72,10 @@ export default function VideoDetailScreen() {
       setVideo(videoData);
 
       if (videoData.status === 'processing') {
-        setPlayerState('generating');
+        // A processing record can already have a playable progressive preview.
+        setPlayerState(videoData.video_url ? 'playing' : 'generating');
         startPolling(videoData.id);
-      } else if (videoData.status === 'completed') {
+      } else if (videoData.status === 'completed' && videoData.video_url) {
         setPlayerState('playing');
       } else if (videoData.status === 'failed') {
         setPlayerState('error');
@@ -109,6 +114,10 @@ export default function VideoDetailScreen() {
     const poll = async () => {
       const result = await pollVideoStatus(videoId, (updated) => {
         setVideo((prev) => (prev ? { ...prev, ...updated } : prev));
+        // Switch to playback as soon as the URL is present; completion is not
+        // required for a progressive preview.
+        if (updated.video_url && updated.status !== 'failed') setPlayerState('playing');
+        else if (updated.status === 'processing') setPlayerState('generating');
       }, 2000, 60);
 
       setPolling(false);
@@ -142,6 +151,18 @@ export default function VideoDetailScreen() {
 
   const handleRetry = () => {
     fetchVideo();
+  };
+
+  const handleDownload = async () => {
+    if (!video?.video_url || video.video_url.startsWith('mock://')) {
+      Alert.alert('Demo preview', 'This demo render is an interactive preview, not an MP4 file. Downloads become available when a real video asset is attached.');
+      return;
+    }
+    try {
+      await Linking.openURL(video.video_url);
+    } catch {
+      Alert.alert('Download unavailable', 'The video file could not be opened for download.');
+    }
   };
 
   if (loading) {
@@ -214,6 +235,11 @@ export default function VideoDetailScreen() {
               <Text style={styles.actionText}>Share</Text>
             </PressableScale>
 
+            <PressableScale onPress={handleDownload} style={styles.actionBtn}>
+              <Download size={20} color={COLORS.neutral[400]} strokeWidth={2} />
+              <Text style={styles.actionText}>Download</Text>
+            </PressableScale>
+
             <View style={[styles.visibilityTag, video.is_public ? styles.tagPublic : styles.tagPrivate]}>
               {video.is_public ? (
                 <Globe size={13} color={COLORS.success[500]} strokeWidth={2} />
@@ -225,6 +251,13 @@ export default function VideoDetailScreen() {
               </Text>
             </View>
           </View>
+        </SlideIn>
+
+        <SlideIn from="bottom" delay={125}>
+          <TouchableOpacity style={styles.webViewButton} onPress={() => router.push(`/web-view?id=${video.id}`)} activeOpacity={0.8}>
+            <MonitorPlay size={17} color={COLORS.primary[300]} strokeWidth={2} />
+            <Text style={styles.webViewButtonText}>Open Web View</Text>
+          </TouchableOpacity>
         </SlideIn>
 
         {/* Title and meta */}
@@ -444,6 +477,25 @@ const styles = StyleSheet.create({
   },
   actionTextLiked: {
     color: COLORS.accent[400],
+  },
+  webViewButton: {
+    marginHorizontal: 16,
+    marginTop: 12,
+    marginBottom: 4,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: COLORS.primary[400] + '55',
+    backgroundColor: COLORS.primary[400] + '12',
+    paddingVertical: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  webViewButtonText: {
+    color: COLORS.primary[300],
+    fontFamily: 'Inter-SemiBold',
+    fontSize: 14,
   },
   visibilityTag: {
     flexDirection: 'row',

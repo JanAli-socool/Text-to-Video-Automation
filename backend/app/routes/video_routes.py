@@ -21,6 +21,7 @@ from app.schemas import (
     CreatorResponse,
 )
 from app.video_engine import generate_video
+from app.providers.replicate import ProviderError
 from app.config import get_settings
 import asyncio
 
@@ -90,11 +91,13 @@ async def create_video(
             f"but you have {user.credits}.",
         )
 
-    # Insert video record
+    # Insert video record. `title` is NOT NULL in the Supabase schema.
+    generated_title = " ".join(req.prompt.strip().split()[:4]).title() or "Untitled Creation"
     insert_result = (
         sb.table("videos")
         .insert({
             "user_id": user.id,
+            "title": generated_title,
             "prompt": req.prompt,
             "style": req.style,
             "status": "processing",
@@ -116,14 +119,19 @@ async def create_video(
 
     video_id = insert_result.data[0]["id"]
 
-    # Run generation (mock or GPU)
-    result = await generate_video(
-        prompt=req.prompt,
-        style=req.style,
-        duration=req.duration,
-        aspect_ratio=req.aspect_ratio,
-        model=req.model,
-    )
+    # Run generation (hosted provider, GPU, or mock). Provider failures become
+    # a visible failed record instead of an unhandled 500 response.
+    try:
+        result = await generate_video(
+            prompt=req.prompt,
+            style=req.style,
+            duration=req.duration,
+            aspect_ratio=req.aspect_ratio,
+            model=req.model,
+        )
+    except ProviderError as exc:
+        sb.table("videos").update({"status": "failed"}).eq("id", video_id).execute()
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
     # Update record with results
     update_result = (

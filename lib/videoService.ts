@@ -1,3 +1,4 @@
+import { Platform } from 'react-native';
 import { supabase } from '@/lib/supabase';
 import type { GenerationParams, Video } from '@/types';
 
@@ -38,13 +39,19 @@ function pickThumbnail(seed: string): string {
   return THUMBNAIL_POOL[idx];
 }
 
-function pickVideoUrl(seed: string): string {
+function pickVideoUrl(seed: string, duration = 5): string {
   let hash = 0;
-  for (let i = 0; i < seed.length; i++) {
-    hash = (hash * 37 + seed.charCodeAt(i)) | 0;
+  for (let i = 0; i < seed.length; i++) hash = (hash * 37 + seed.charCodeAt(i)) | 0;
+  if (process.env.EXPO_PUBLIC_DEMO_MODE === 'true') {
+    // Local deterministic mock scenes: no remote media URL, no CDN failure,
+    // and each duration/prompt combination gets a distinct animated scene.
+    return `mock://scene-${Math.abs(hash) % 8}-${duration}s`;
   }
-  const idx = Math.abs(hash) % SAMPLE_VIDEO_URLS.length;
-  return SAMPLE_VIDEO_URLS[idx];
+  return SAMPLE_VIDEO_URLS[Math.abs(hash) % SAMPLE_VIDEO_URLS.length];
+}
+
+function creditsFor(params: GenerationParams): number {
+  return params.duration + (params.model === 'neura-motion-v2' ? 2 : params.model === 'diffusion-cine' ? 5 : 0);
 }
 
 function generateTitle(prompt: string): string {
@@ -84,9 +91,42 @@ export async function generateVideo(
     return { video: {} as Video, error: msg };
   }
 
+  // Production path: use the FastAPI provider adapter when configured. The
+  // native Supabase session token is forwarded to the backend, which accepts
+  // both Supabase and legacy backend JWTs.
+  const demoMode = process.env.EXPO_PUBLIC_DEMO_MODE === 'true';
+  const configuredApiUrl = process.env.EXPO_PUBLIC_API_URL?.trim();
+  const apiUrl = demoMode ? undefined : (configuredApiUrl ?? (Platform.OS === 'web' ? '' : undefined));
+  if (apiUrl !== undefined) {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.access_token) {
+      const msg = 'Your session expired. Please sign in again.';
+      callbacks?.onError?.(msg);
+      return { video: {} as Video, error: msg };
+    }
+    callbacks?.onProgress?.(8, 'Submitting to video model');
+    try {
+      const response = await fetch(`${apiUrl.replace(/\/$/, '')}/api/v1/videos`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}`, 'x-preview-user-id': user.id },
+        body: JSON.stringify(params),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.detail || 'Video generation failed');
+      callbacks?.onProgress?.(100, 'Video ready');
+      callbacks?.onPreviewReady?.(payload.id, payload.video_url);
+      callbacks?.onComplete?.(payload as Video);
+      return { video: payload as Video, error: null };
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : 'Unable to reach the video generation backend.';
+      callbacks?.onError?.(msg);
+      return { video: {} as Video, error: msg };
+    }
+  }
+
   const title = generateTitle(params.prompt);
   const thumbnailUrl = pickThumbnail(params.prompt);
-  const videoUrl = pickVideoUrl(params.prompt);
+  const videoUrl = pickVideoUrl(params.prompt, params.duration);
 
   // Step 1: insert as "processing"
   const { data, error } = await supabase
@@ -126,6 +166,7 @@ export async function generateVideo(
   ];
 
   let totalProgress = 0;
+  let previewPublished = false;
   const totalSteps = stages.reduce((s, st) => s + st.steps, 0);
 
   for (const stage of stages) {
@@ -135,9 +176,17 @@ export async function generateVideo(
       const pct = Math.round((totalProgress / totalSteps) * 100);
       callbacks?.onProgress?.(pct, stage.label);
 
-      // At ~50% progress, the preview becomes available (simulating progressive preview)
-      if (pct >= 50 && videoUrl) {
-        callbacks?.onPreviewReady?.(videoId, videoUrl);
+      // Publish the first playable asset once, without waiting for finalization. The
+      // record stays `processing`, so clients can distinguish a preview from a final file.
+      if (pct >= 50 && videoUrl && !previewPublished) {
+        previewPublished = true;
+        const { error: previewError } = await supabase
+          .from('videos')
+          .update({ video_url: videoUrl })
+          .eq('id', videoId)
+          .eq('status', 'processing');
+
+        if (!previewError) callbacks?.onPreviewReady?.(videoId, videoUrl);
       }
     }
   }
@@ -158,6 +207,13 @@ export async function generateVideo(
     const result = { video: data as Video, error: null };
     callbacks?.onComplete?.(data as Video);
     return result;
+  }
+
+  // Demo mode still exercises the real credit lifecycle, but never calls a
+  // paid provider. Deduct only after the mock render successfully completes.
+  if (demoMode) {
+    const currentCredits = Number((await supabase.from('profiles').select('credits').eq('id', user.id).maybeSingle()).data?.credits ?? 0);
+    await supabase.from('profiles').update({ credits: Math.max(0, currentCredits - creditsFor(params)) }).eq('id', user.id);
   }
 
   const result = { video: updated as Video, error: null };

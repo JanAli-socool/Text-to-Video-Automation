@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -36,7 +36,7 @@ import {
 import { COLORS } from '@/lib/colors';
 import { useAuth } from '@/context/AuthContext';
 import { generateVideo, type GenerationStage } from '@/lib/videoService';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import { FadeIn, SlideIn, PressableScale, ProgressBar, Pulse } from '@/components/Animations';
 import {
   VIDEO_STYLES,
@@ -45,6 +45,7 @@ import {
   TRENDING_PROMPTS,
   type AspectRatio,
   type GenerationParams,
+  STRESS_TEST_PROMPT,
 } from '@/types';
 
 const { width } = Dimensions.get('window');
@@ -75,6 +76,13 @@ export default function CreateScreen() {
   const [previewReady, setPreviewReady] = useState(false);
   const [generatedVideoId, setGeneratedVideoId] = useState<string | null>(null);
   const scrollRef = useRef<ScrollView>(null);
+  const previewNavigatedRef = useRef(false);
+
+  useFocusEffect(
+    useCallback(() => {
+      refreshProfile();
+    }, [refreshProfile])
+  );
 
   const creditsNeeded = duration + (model === 'neura-motion-v2' ? 2 : model === 'diffusion-cine' ? 5 : 0);
   const hasEnoughCredits = (profile?.credits ?? 0) >= creditsNeeded;
@@ -94,6 +102,7 @@ export default function CreateScreen() {
     setStageLabel('Starting...');
     setPreviewReady(false);
     setGeneratedVideoId(null);
+    previewNavigatedRef.current = false;
 
     const params: GenerationParams = {
       prompt: prompt.trim(),
@@ -112,6 +121,12 @@ export default function CreateScreen() {
       onPreviewReady: (videoId) => {
         setPreviewReady(true);
         setGeneratedVideoId(videoId);
+        // Enter the player at the first playable preview; it will keep polling
+        // and swap to the final asset without resetting the media element.
+        if (!previewNavigatedRef.current) {
+          previewNavigatedRef.current = true;
+          router.push(`/video/${videoId}`);
+        }
       },
       onError: (err) => {
         Alert.alert('Generation failed', err);
@@ -125,7 +140,7 @@ export default function CreateScreen() {
     }
 
     await refreshProfile();
-    router.push(`/video/${video.id}`);
+    if (!previewNavigatedRef.current) router.push(`/video/${video.id}`);
   };
 
   const usePrompt = (p: string) => {
@@ -160,7 +175,7 @@ export default function CreateScreen() {
             <View style={styles.creditsLeft}>
               <Sparkles size={16} color={COLORS.secondary[400]} strokeWidth={2} />
               <Text style={styles.creditsText}>
-                {profile?.credits ?? 0} credits available
+                {profile ? `${profile.credits} credits available` : 'Syncing credits…'}
               </Text>
             </View>
             <Text style={styles.creditsCost}>
@@ -242,7 +257,7 @@ export default function CreateScreen() {
                 onChangeText={setPrompt}
                 multiline
                 textAlignVertical="top"
-                maxLength={500}
+                maxLength={2000}
               />
               <View style={styles.promptFooter}>
                 <Text style={styles.charCount}>{prompt.length}/500</Text>
@@ -254,6 +269,9 @@ export default function CreateScreen() {
               <View style={styles.section}>
                 <Text style={styles.label}>Try a trending prompt</Text>
                 <View style={styles.promptChips}>
+                  <PressableScale onPress={() => { setPrompt(STRESS_TEST_PROMPT); setDuration(45); setStyle('cinematic'); }} style={[styles.promptChip, styles.benchmarkChip]}>
+                    <Text style={styles.promptChipText} numberOfLines={2}>🎞️ Run cinematic stress test · 45s</Text>
+                  </PressableScale>
                   {TRENDING_PROMPTS.slice(0, 4).map((p, i) => (
                     <PressableScale
                       key={i}
@@ -294,7 +312,7 @@ export default function CreateScreen() {
                 Duration: <Text style={styles.labelValue}>{duration}s</Text>
               </Text>
               <View style={styles.durationRow}>
-                {[3, 5, 8, 10, 15].map((d) => (
+                {[3, 5, 8, 10, 15, 30, 45].map((d) => (
                   <PressableScale
                     key={d}
                     onPress={() => setDuration(d)}
@@ -534,6 +552,11 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     padding: 12,
     width: (width - 48) / 2,
+  },
+  benchmarkChip: {
+    borderColor: COLORS.primary[400],
+    backgroundColor: COLORS.primary[400] + '18',
+    width: '100%',
   },
   promptChipText: {
     fontFamily: 'Inter-Regular',

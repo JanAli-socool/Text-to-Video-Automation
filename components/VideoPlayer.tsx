@@ -1,5 +1,6 @@
-import { useRef, useState, useEffect, useCallback } from 'react';
+import { createElement, useRef, useState, useEffect, useCallback } from 'react';
 import { View, Text, Image, StyleSheet, TouchableOpacity, Platform } from 'react-native';
+import { WebView } from 'react-native-webview';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -30,9 +31,7 @@ interface VideoPlayerProps {
   onPlay?: () => void;
 }
 
-const AnimatedLoader = Animated.createAnimatedIcon ? undefined : undefined;
-
-function SpinningLoader({ color = COLORS.primary[400], size = 28 }) {
+function SpinningLoader({ color = COLORS.primary[400], size = 28 }: { color?: string; size?: number }) {
   const rotation = useSharedValue(0);
 
   useEffect(() => {
@@ -87,6 +86,39 @@ function PulsingDots() {
   );
 }
 
+function WebVideo({ videoUrl, thumbnailUrl }: { videoUrl: string; thumbnailUrl: string }) {
+  return createElement('video', {
+    src: videoUrl,
+    poster: thumbnailUrl,
+    controls: true,
+    playsInline: true,
+    preload: 'metadata',
+    style: { position: 'absolute', inset: 0, width: '100%', height: '100%', backgroundColor: '#0a0a0a' },
+  });
+}
+
+function MockVideoSurface({ scene, isPlaying }: { scene: string; isPlaying: boolean }) {
+  const palette = ['#172554,#0f766e', '#3b0764,#0e7490', '#451a03,#9f1239', '#052e16,#164e63', '#1e1b4b,#7c2d12', '#111827,#1d4ed8', '#312e81,#be123c', '#082f49,#713f12'];
+  const index = Math.abs(scene.split('').reduce((n, c) => n + c.charCodeAt(0), 0)) % palette.length;
+  return createElement('div', {
+    style: {
+      position: 'absolute', inset: 0, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center',
+      color: '#fff', background: `linear-gradient(135deg, ${palette[index].replace(',', ' 0%, ')} 100%)`,
+      fontFamily: 'Inter, Arial, sans-serif',
+    },
+  },
+    createElement('div', { style: { position: 'absolute', width: '38%', height: '38%', borderRadius: '50%', background: 'rgba(45,212,191,.42)', filter: 'blur(28px)', animation: isPlaying ? 'mockFloat 3s ease-in-out infinite alternate' : 'none' } }),
+    createElement('div', { style: { position: 'absolute', width: '24%', height: '70%', borderRadius: 18, background: 'linear-gradient(180deg, rgba(255,255,255,.72), rgba(45,212,191,.12))', transform: 'perspective(400px) rotateY(-18deg)', boxShadow: '0 0 60px rgba(45,212,191,.42)', animation: isPlaying ? 'mockDrift 4s ease-in-out infinite alternate' : 'none' } }),
+    createElement('div', { style: { position: 'absolute', inset: 0, backgroundImage: 'linear-gradient(rgba(255,255,255,.08) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.08) 1px, transparent 1px)', backgroundSize: '42px 42px', transform: isPlaying ? 'scale(1.12)' : 'scale(1)', transition: 'transform 600ms ease' } }),
+    createElement('div', { style: { zIndex: 2, textAlign: 'center', letterSpacing: 2, textShadow: '0 2px 18px #000' } },
+      createElement('div', { style: { fontSize: 12, opacity: .72, textTransform: 'uppercase' } }, 'Demo render'),
+      createElement('div', { style: { fontSize: 20, fontWeight: 700, marginTop: 6 } }, scene.replace('mock://', '').replaceAll('-', ' ')),
+      createElement('div', { style: { fontSize: 11, opacity: .65, marginTop: 8 } }, isPlaying ? 'Playing preview' : 'Ready to play')
+    ),
+    createElement('style', null, '@keyframes mockFloat{from{transform:translate(-22%,12%) scale(.8)}to{transform:translate(30%,-12%) scale(1.2)}}@keyframes mockDrift{from{margin-left:-15%;transform:perspective(400px) rotateY(-18deg) translateY(8%)}to{margin-left:15%;transform:perspective(400px) rotateY(18deg) translateY(-8%)}}')
+  );
+}
+
 export function VideoPlayer({
   thumbnailUrl,
   videoUrl,
@@ -106,6 +138,9 @@ export function VideoPlayer({
   const progressWidth = useSharedValue(0);
 
   const aspect = aspectRatio === '9:16' ? 9 / 16 : aspectRatio === '1:1' ? 1 : 16 / 9;
+  const isDemoMode = process.env.EXPO_PUBLIC_DEMO_MODE === 'true';
+  const isMockVideo = isDemoMode || videoUrl.startsWith('mock://');
+  const mockScene = videoUrl.startsWith('mock://') ? videoUrl : 'mock://library-demo';
 
   // Simulated playback progress (since mock videos have no real stream)
   useEffect(() => {
@@ -145,6 +180,10 @@ export function VideoPlayer({
   }, [state, onRetry, onPlay]);
 
   const handlePressArea = useCallback(() => {
+    if (isMockVideo) {
+      handlePlayPause();
+      return;
+    }
     setShowControls((prev) => {
       if (prev && isActuallyPlaying) {
         overlayOpacity.value = withTiming(0, { duration: 300 });
@@ -153,7 +192,7 @@ export function VideoPlayer({
       overlayOpacity.value = withTiming(1, { duration: 300 });
       return true;
     });
-  }, [isActuallyPlaying]);
+  }, [isActuallyPlaying, isMockVideo, handlePlayPause]);
 
   const progressStyle = useAnimatedStyle(() => ({
     width: `${progressWidth.value}%`,
@@ -167,25 +206,49 @@ export function VideoPlayer({
     transform: [{ scale: playButtonScale.value }],
   }));
 
-  const canPlay = state === 'playing' || state === 'paused';
+  const canPlay = state === 'playing';
   const isBusy = state === 'loading' || state === 'buffering' || state === 'generating';
 
   return (
     <View style={[styles.container, { aspectRatio: aspect }]}>
       <Image source={{ uri: thumbnailUrl }} style={styles.thumbnail} resizeMode="cover" />
 
-      {/* Dimming overlay */}
-      <Animated.View style={[styles.dimOverlay, overlayStyle]} />
+      {/* A preview URL is published while the job is still processing. Keep the
+          media element mounted between status updates so the browser/WebView can
+          retain its buffered range and playback position. */}
+      {isMockVideo && Platform.OS === 'web' && state !== 'generating' && state !== 'error' && (
+        <MockVideoSurface scene={mockScene} isPlaying={isActuallyPlaying} />
+      )}
+      {!isMockVideo && videoUrl && state !== 'generating' && state !== 'error' && Platform.OS === 'web' && (
+        <WebVideo videoUrl={videoUrl} thumbnailUrl={thumbnailUrl} />
+      )}
+      {!isMockVideo && videoUrl && state !== 'generating' && state !== 'error' && Platform.OS !== 'web' && (
+        <WebView
+          source={{ html: `<html><head><meta name="viewport" content="width=device-width,initial-scale=1" /></head><body><video controls playsinline preload="auto" poster="${thumbnailUrl}" style="width:100%;height:100%;background:#0a0a0a" src="${videoUrl}"></video></body></html>` }}
+          style={styles.nativeVideo}
+          allowsInlineMediaPlayback
+          mediaPlaybackRequiresUserAction
+          onError={() => onRetry?.()}
+        />
+      )}
 
- {/* Controls overlay */}
-      <Animated.View style={[styles.controlsOverlay, overlayStyle]}>
+      {/* Dimming overlay only belongs to the placeholder/state surface. */}
+      {(!videoUrl || state === 'generating' || state === 'error') && (
+        <Animated.View style={[styles.dimOverlay, overlayStyle]} />
+      )}
+
+      {/* Controls overlay */}
+      <Animated.View
+        pointerEvents={!isMockVideo && videoUrl && state !== 'generating' && state !== 'error' ? 'none' : 'auto'}
+        style={[styles.controlsOverlay, overlayStyle, !isMockVideo && videoUrl && state !== 'generating' && state !== 'error' && styles.nativeControlsHidden]}
+      >
         {state === 'generating' && (
           <View style={styles.stateOverlay}>
             <SpinningLoader color={COLORS.warning[400]} size={36} />
             <Text style={styles.statusText}>Generating your video</Text>
             <Text style={styles.progressText}>{progress}% complete</Text>
             <View style={styles.genProgressBar}>
-              <Animated.View style={[styles.genProgressFill, { width: `${progress}%` }]} />
+              <Animated.View style={[styles.genProgressFill, { width: `${progress}%` } as any]} />
             </View>
             <Text style={styles.hintText}>Preview will appear as soon as it's ready</Text>
           </View>
@@ -270,6 +333,10 @@ const styles = StyleSheet.create({
   thumbnail: {
     ...StyleSheet.absoluteFillObject,
   },
+  nativeVideo: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: '#0a0a0a',
+  },
   dimOverlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0,0,0,0.35)',
@@ -278,6 +345,9 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  nativeControlsHidden: {
+    opacity: 0,
   },
   touchArea: {
     width: '100%',

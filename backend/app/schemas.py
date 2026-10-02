@@ -38,9 +38,9 @@ class UserResponse(BaseModel):
 
 # ---- Video ----
 class VideoCreateRequest(BaseModel):
-    prompt: str = Field(min_length=3, max_length=500)
+    prompt: str = Field(min_length=3, max_length=4000)
     style: str = Field(default="cinematic")
-    duration: int = Field(default=5, ge=1, le=30)
+    duration: int = Field(default=5, ge=1, le=60)
     aspect_ratio: str = Field(default="16:9", pattern="^(16:9|9:16|1:1)$")
     model: str = Field(default="neura-motion-v1")
     is_public: bool = True

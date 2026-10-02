@@ -10,7 +10,7 @@ import Animated, {
   useAnimatedReaction,
   runOnJS,
 } from 'react-native-reanimated';
-import { PressableProps, ViewStyle } from 'react-native';
+import { PressableProps, ViewStyle, StyleProp } from 'react-native';
 import { GestureDetector, Gesture } from 'react-native-gesture-handler';
 
 const SPRING_CONFIG = { damping: 15, stiffness: 150, mass: 0.8 };
@@ -94,7 +94,7 @@ interface PressableScaleProps extends Omit<PressableProps, 'onPress'> {
   children: ReactNode;
   onPress?: () => void;
   scaleTo?: number;
-  style?: ViewStyle;
+  style?: StyleProp<ViewStyle>;
 }
 
 export function PressableScale({ children, onPress, scaleTo = 0.96, style, ...rest }: PressableScaleProps) {
@@ -215,8 +215,8 @@ export function Pulse({ children, minScale = 0.97, maxScale = 1.03, duration = 1
   const scale = useSharedValue(1);
 
   useEffect(() => {
-    scale.value = withSpring(maxScale, { duration, damping: 10, stiffness: 80 }, () => {
-      scale.value = withSpring(minScale, { duration, damping: 10, stiffness: 80 });
+    scale.value = withSpring(maxScale, { damping: 10, stiffness: 80 }, () => {
+      scale.value = withSpring(minScale, { damping: 10, stiffness: 80 });
     });
   }, [minScale, maxScale, duration]);
 
