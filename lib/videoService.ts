@@ -42,11 +42,8 @@ function pickThumbnail(seed: string): string {
 function pickVideoUrl(seed: string, duration = 5): string {
   let hash = 0;
   for (let i = 0; i < seed.length; i++) hash = (hash * 37 + seed.charCodeAt(i)) | 0;
-  if (process.env.EXPO_PUBLIC_DEMO_MODE === 'true') {
-    // Local deterministic mock scenes: no remote media URL, no CDN failure,
-    // and each duration/prompt combination gets a distinct animated scene.
-    return `mock://scene-${Math.abs(hash) % 8}-${duration}s`;
-  }
+  // Always return a real playable video URL. In demo mode we use the sample pool.
+  // This ensures video_url in the database is always a playable https:// URL.
   return SAMPLE_VIDEO_URLS[Math.abs(hash) % SAMPLE_VIDEO_URLS.length];
 }
 
@@ -176,27 +173,31 @@ export async function generateVideo(
       const pct = Math.round((totalProgress / totalSteps) * 100);
       callbacks?.onProgress?.(pct, stage.label);
 
-      // Publish the first playable asset once, without waiting for finalization. The
-      // record stays `processing`, so clients can distinguish a preview from a final file.
-      if (pct >= 50 && videoUrl && !previewPublished) {
-        previewPublished = true;
-        const { error: previewError } = await supabase
-          .from('videos')
-          .update({ video_url: videoUrl })
-          .eq('id', videoId)
-          .eq('status', 'processing');
+// Publish the first playable asset once, without waiting for finalization. The
+       // record stays `processing`, so clients can distinguish a preview from a final file.
+       // Only write real https:// URLs to video_url; never write mock:// scheme.
+       const playableVideoUrl = videoUrl && videoUrl.startsWith('https://') ? videoUrl : '';
+       if (pct >= 50 && playableVideoUrl && !previewPublished) {
+         previewPublished = true;
+         const { error: previewError } = await supabase
+           .from('videos')
+           .update({ video_url: playableVideoUrl })
+           .eq('id', videoId)
+           .eq('status', 'processing');
 
-        if (!previewError) callbacks?.onPreviewReady?.(videoId, videoUrl);
-      }
+         if (!previewError) callbacks?.onPreviewReady?.(videoId, playableVideoUrl);
+       }
     }
   }
 
   // Step 3: mark as completed with the video URL
+  // Only write real https:// URLs to video_url; never write mock:// scheme.
+  const playableVideoUrl = videoUrl && videoUrl.startsWith('https://') ? videoUrl : '';
   const { data: updated, error: updateErr } = await supabase
     .from('videos')
     .update({
-      status: 'completed',
-      video_url: videoUrl,
+      status: playableVideoUrl ? 'completed' : 'failed',
+      video_url: playableVideoUrl,
     })
     .eq('id', videoId)
     .select()

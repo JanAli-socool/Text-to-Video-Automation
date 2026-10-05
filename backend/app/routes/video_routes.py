@@ -133,21 +133,25 @@ async def create_video(
         sb.table("videos").update({"status": "failed"}).eq("id", video_id).execute()
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
-    # Update record with results
-    update_result = (
-        sb.table("videos")
-        .update({
-            "status": "completed",
-            "title": result["title"],
-            "thumbnail_url": result["thumbnail_url"],
-            "video_url": result["video_url"],
-        })
-        .eq("id", video_id)
-        .execute()
-    )
+    # Never mark `completed` without a deliverable asset. Mock mode deliberately
+    # produces no file, so that case becomes a visible failure, and credits stay
+    # with the user.
+    delivered = bool(result.get("video_url"))
+    sb.table("videos").update({
+        "status": "completed" if delivered else "failed",
+        "title": result["title"],
+        "thumbnail_url": result["thumbnail_url"] if delivered else "",
+        "video_url": result["video_url"] if delivered else "",
+    }).eq("id", video_id).execute()
 
-    # Deduct credits
-    sb.table("profiles").update({"credits": user.credits - credit_cost}).eq("id", user.id).execute()
+    if delivered:
+        # Deduct credits
+        sb.table("profiles").update({"credits": user.credits - credit_cost}).eq("id", user.id).execute()
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="VIDEO_PROVIDER is not set to a working provider; no video was rendered.",
+        )
 
     # Return the completed video
     final = (

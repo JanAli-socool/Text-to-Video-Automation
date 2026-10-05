@@ -260,18 +260,18 @@ export default function CreateScreen() {
                 maxLength={2000}
               />
               <View style={styles.promptFooter}>
-                <Text style={styles.charCount}>{prompt.length}/500</Text>
+                <Text style={styles.charCount}>{prompt.length}/2000</Text>
               </View>
             </View>
 
-            {/* Trending prompts */}
+{/* Trending prompts */}
             {prompt.length === 0 && (
               <View style={styles.section}>
                 <Text style={styles.label}>Try a trending prompt</Text>
                 <View style={styles.promptChips}>
                   <PressableScale onPress={() => { setPrompt(STRESS_TEST_PROMPT); setDuration(45); setStyle('cinematic'); }} style={[styles.promptChip, styles.benchmarkChip]}>
-                    <Text style={styles.promptChipText} numberOfLines={2}>🎞️ Run cinematic stress test · 45s</Text>
-                  </PressableScale>
+                        <Text style={styles.promptChipText} numberOfLines={2}>🎞️ Run cinematic stress test · 45s</Text>
+                      </PressableScale>
                   {TRENDING_PROMPTS.slice(0, 4).map((p, i) => (
                     <PressableScale
                       key={i}
@@ -287,8 +287,15 @@ export default function CreateScreen() {
               </View>
             )}
 
-            {/* Style selector */}
-            <View style={styles.section}>
+            {/* Demo build notice */}
+            <View style={styles.demoNotice}>
+              <Text style={styles.demoNoticeText}>
+                ⚠️ Demo build: Style, Aspect Ratio, and Model selectors hidden — not yet wired to provider.
+              </Text>
+            </View>
+
+            {/* Style selector — HIDDEN: placebo control, not wired to Replicate provider */}
+            {/* <View style={styles.section}>
               <Text style={styles.label}>Style</Text>
               <View style={styles.styleGrid}>
                 {VIDEO_STYLES.map((s) => (
@@ -304,7 +311,7 @@ export default function CreateScreen() {
                   </PressableScale>
                 ))}
               </View>
-            </View>
+            </View> */}
 
             {/* Duration */}
             <View style={styles.section}>
@@ -312,7 +319,8 @@ export default function CreateScreen() {
                 Duration: <Text style={styles.labelValue}>{duration}s</Text>
               </Text>
               <View style={styles.durationRow}>
-                {[3, 5, 8, 10, 15, 30, 45].map((d) => (
+                {/* Constrained to provider-supported durations (5s, 10s) */}
+                {[5, 10].map((d) => (
                   <PressableScale
                     key={d}
                     onPress={() => setDuration(d)}
@@ -326,8 +334,8 @@ export default function CreateScreen() {
               </View>
             </View>
 
-            {/* Aspect ratio */}
-            <View style={styles.section}>
+            {/* Aspect ratio — HIDDEN: placebo control, discarded by Replicate provider */}
+            {/* <View style={styles.section}>
               <Text style={styles.label}>Aspect ratio</Text>
               <View style={styles.aspectRow}>
                 {ASPECT_RATIOS.map((ar) => (
@@ -353,7 +361,7 @@ export default function CreateScreen() {
                   </PressableScale>
                 ))}
               </View>
-            </View>
+            </View> */}
 
             {/* Advanced settings */}
             <TouchableOpacity
@@ -371,8 +379,8 @@ export default function CreateScreen() {
 
             {showAdvanced && (
               <View style={styles.advancedSection}>
-                {/* Model selection */}
-                <View style={styles.section}>
+                {/* Model selection — HIDDEN: placebo control, only affects price not output */}
+                {/* <View style={styles.section}>
                   <Text style={styles.label}>AI Model</Text>
                   <View style={styles.modelList}>
                     {AI_MODELS.map((m) => (
@@ -393,7 +401,7 @@ export default function CreateScreen() {
                       </PressableScale>
                     ))}
                   </View>
-                </View>
+                </View> */}
 
                 {/* Visibility */}
                 <View style={styles.section}>
@@ -505,6 +513,20 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter-Regular',
     fontSize: 12,
     color: COLORS.neutral[400],
+  },
+  demoNotice: {
+    padding: 16,
+    backgroundColor: '#fff3cd',
+    borderBottomWidth: 1,
+    borderColor: '#ffc107',
+    borderRadius: 12,
+    marginBottom: 16,
+  },
+  demoNoticeText: {
+    color: '#856404',
+    fontFamily: 'Inter-Medium',
+    fontSize: 13,
+    textAlign: 'center',
   },
   section: {
     marginBottom: 24,

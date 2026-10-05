@@ -138,9 +138,11 @@ export function VideoPlayer({
   const progressWidth = useSharedValue(0);
 
   const aspect = aspectRatio === '9:16' ? 9 / 16 : aspectRatio === '1:1' ? 1 : 16 / 9;
-  const isDemoMode = process.env.EXPO_PUBLIC_DEMO_MODE === 'true';
-  const isMockVideo = isDemoMode || videoUrl.startsWith('mock://');
-  const mockScene = videoUrl.startsWith('mock://') ? videoUrl : 'mock://library-demo';
+  // Playability is a property of the URL, not of the build-time demo flag.
+  // Keying off EXPO_PUBLIC_DEMO_MODE made every real video render as a mock.
+  const isMockVideo = /^mock:\/\//.test(videoUrl);
+  const mockScene = isMockVideo ? videoUrl : 'mock://library-demo';
+  const hasPlayableAsset = Boolean(videoUrl) && !isMockVideo;
 
   // Simulated playback progress (since mock videos have no real stream)
   useEffect(() => {
@@ -206,7 +208,8 @@ export function VideoPlayer({
     transform: [{ scale: playButtonScale.value }],
   }));
 
-  const canPlay = state === 'playing';
+  const canPlay = state === 'playing' && (hasPlayableAsset || isMockVideo);
+  const renderMedia = Boolean(videoUrl) && state !== 'generating' && state !== 'error';
   const isBusy = state === 'loading' || state === 'buffering' || state === 'generating';
 
   return (
@@ -219,10 +222,17 @@ export function VideoPlayer({
       {isMockVideo && Platform.OS === 'web' && state !== 'generating' && state !== 'error' && (
         <MockVideoSurface scene={mockScene} isPlaying={isActuallyPlaying} />
       )}
-      {!isMockVideo && videoUrl && state !== 'generating' && state !== 'error' && Platform.OS === 'web' && (
+      {/* Native has no DOM, so the animated mock surface cannot render. Say so
+          instead of leaving the static thumbnail as the only thing visible. */}
+      {isMockVideo && Platform.OS !== 'web' && state !== 'generating' && state !== 'error' && (
+        <View style={styles.nativeMockNotice}>
+          <Text style={styles.nativeMockText}>Demo render — no video file attached</Text>
+        </View>
+      )}
+      {hasPlayableAsset && state !== 'generating' && state !== 'error' && Platform.OS === 'web' && (
         <WebVideo videoUrl={videoUrl} thumbnailUrl={thumbnailUrl} />
       )}
-      {!isMockVideo && videoUrl && state !== 'generating' && state !== 'error' && Platform.OS !== 'web' && (
+      {hasPlayableAsset && state !== 'generating' && state !== 'error' && Platform.OS !== 'web' && (
         <WebView
           source={{ html: `<html><head><meta name="viewport" content="width=device-width,initial-scale=1" /></head><body><video controls playsinline preload="auto" poster="${thumbnailUrl}" style="width:100%;height:100%;background:#0a0a0a" src="${videoUrl}"></video></body></html>` }}
           style={styles.nativeVideo}
@@ -233,14 +243,14 @@ export function VideoPlayer({
       )}
 
       {/* Dimming overlay only belongs to the placeholder/state surface. */}
-      {(!videoUrl || state === 'generating' || state === 'error') && (
+      {(!hasPlayableAsset || state === 'generating' || state === 'error') && (
         <Animated.View style={[styles.dimOverlay, overlayStyle]} />
       )}
 
       {/* Controls overlay */}
       <Animated.View
-        pointerEvents={!isMockVideo && videoUrl && state !== 'generating' && state !== 'error' ? 'none' : 'auto'}
-        style={[styles.controlsOverlay, overlayStyle, !isMockVideo && videoUrl && state !== 'generating' && state !== 'error' && styles.nativeControlsHidden]}
+        pointerEvents={!renderMedia ? 'none' : 'auto'}
+        style={[styles.controlsOverlay, overlayStyle, !renderMedia && styles.nativeControlsHidden]}
       >
         {state === 'generating' && (
           <View style={styles.stateOverlay}>
@@ -336,6 +346,17 @@ const styles = StyleSheet.create({
   nativeVideo: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: '#0a0a0a',
+  },
+  nativeMockNotice: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.55)',
+  },
+  nativeMockText: {
+    fontFamily: 'Inter-Medium',
+    fontSize: 13,
+    color: COLORS.neutral[300],
   },
   dimOverlay: {
     ...StyleSheet.absoluteFillObject,

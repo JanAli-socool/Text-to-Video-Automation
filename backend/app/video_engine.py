@@ -149,18 +149,21 @@ async def generate_video(
         }
 
     if not settings.enable_gpu_generation:
-        # ---- Mock mode: simulate generation with progress ----
+        # ---- Mock mode: simulate progress only. There is no renderer, so there
+        # is no video file. Returning a fabricated CDN URL here produced rows
+        # marked `completed` that could never play. `mock` is truthy so callers
+        # can tell "deliberately not rendered" from "produced an asset".
         total_steps = 20
         for i in range(1, total_steps + 1):
             await asyncio.sleep(settings.mock_generation_delay / total_steps)
             if on_progress:
                 on_progress(int(i / total_steps * 100))
 
-        video_url = f"https://cdn.neuramotion.ai/mock/{hashlib.md5(prompt.encode()).hexdigest()[:12]}.mp4"
         return {
             "title": title,
             "thumbnail_url": thumbnail_url,
-            "video_url": video_url,
+            "video_url": "",
+            "mock": True,
         }
 
     # ---- GPU mode: actual diffusion inference ----

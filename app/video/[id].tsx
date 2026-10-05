@@ -71,13 +71,15 @@ export default function VideoDetailScreen() {
       const videoData = data as unknown as VideoWithCreator;
       setVideo(videoData);
 
+      // A `mock://` value is a scene identifier, not a media asset.
+      const playable = Boolean(videoData.video_url) && !videoData.video_url.startsWith('mock://');
       if (videoData.status === 'processing') {
-        // A processing record can already have a playable progressive preview.
-        setPlayerState(videoData.video_url ? 'playing' : 'generating');
+        setPlayerState(playable ? 'playing' : 'generating');
         startPolling(videoData.id);
-      } else if (videoData.status === 'completed' && videoData.video_url) {
+      } else if (videoData.status === 'completed' && playable) {
         setPlayerState('playing');
-      } else if (videoData.status === 'failed') {
+      } else if (videoData.status === 'failed' || videoData.status === 'completed') {
+        // completed with no playable URL is a broken record, not a success.
         setPlayerState('error');
       }
 
@@ -115,16 +117,17 @@ export default function VideoDetailScreen() {
       const result = await pollVideoStatus(videoId, (updated) => {
         setVideo((prev) => (prev ? { ...prev, ...updated } : prev));
         // Switch to playback as soon as the URL is present; completion is not
-        // required for a progressive preview.
-        if (updated.video_url && updated.status !== 'failed') setPlayerState('playing');
+        // required for a progressive preview. Guard against mock:// URLs.
+        if (updated.video_url && !updated.video_url.startsWith('mock://') && updated.status !== 'failed') setPlayerState('playing');
         else if (updated.status === 'processing') setPlayerState('generating');
       }, 2000, 60);
 
       setPolling(false);
 
       if (result && result.status === 'completed') {
+        const playable = Boolean(result.video_url) && !result.video_url.startsWith('mock://');
         setVideo((prev) => (prev ? { ...prev, ...result } : prev));
-        setPlayerState('playing');
+        setPlayerState(playable ? 'playing' : 'error');
       } else if (result && result.status === 'failed') {
         setPlayerState('error');
       }
